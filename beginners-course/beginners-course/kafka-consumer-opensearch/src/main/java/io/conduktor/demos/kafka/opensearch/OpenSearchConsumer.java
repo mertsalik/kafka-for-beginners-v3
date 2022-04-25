@@ -1,5 +1,6 @@
 package io.conduktor.demos.kafka.opensearch;
 
+import com.google.gson.JsonParser;
 import org.apache.http.HttpHost;
 import org.apache.http.auth.AuthScope;
 import org.apache.http.auth.UsernamePasswordCredentials;
@@ -57,6 +58,11 @@ public class OpenSearchConsumer {
         return restHighLevelClient;
     }
 
+
+    private static String extractId(String json) {
+        return JsonParser.parseString(json).getAsJsonObject().get("meta").getAsJsonObject().get("id").getAsString();
+    }
+
     private static KafkaConsumer<String, String> createKafkaConsumer() {
         String bootstrapServers = "127.0.0.1:9092";
         String groupId = "consumer-opensearch-demo";
@@ -68,6 +74,8 @@ public class OpenSearchConsumer {
         properties.setProperty(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         properties.setProperty(ConsumerConfig.GROUP_ID_CONFIG, groupId);
         properties.setProperty(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
+        // manual offset commit
+        properties.setProperty(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
 
         return new KafkaConsumer<>(properties);
     }
@@ -100,15 +108,27 @@ public class OpenSearchConsumer {
 
                 for (ConsumerRecord<String, String> record : records) {
                     // send the record into the OpenSearch
+
+                    // strategy One
+                    // define an ID using Kafka Record coordinates
+                    // String id = record.topic() + "_" + record.partition() + "_" + record.offset();
+
                     try {
+                        // Strategy Two
+                        // we extract the ID from the JSON value
+                        String id = extractId(record.value());
                         IndexRequest indexRequest = new IndexRequest("wikimedia")
-                                .source(record.value(), XContentType.JSON);
+                                .source(record.value(), XContentType.JSON).id(id);
                         IndexResponse response = openSearchClient.index(indexRequest, RequestOptions.DEFAULT);
-                        logger.info(response.getId());
+                        // logger.info(response.getId());
                     } catch (Exception e) {
 
                     }
                 }
+
+                // commit offsets after the batch is consumed
+                consumer.commitSync();
+                logger.info("Offsets have been committed!");
             }
         }
 
